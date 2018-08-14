@@ -72,8 +72,11 @@ class integrated_gradients:
                 print(','.join([str(i) for i in self.outchannels]))
 
         #Build evaluate functions for visual nodes.
-        self.get_vis_values = K.function( inputs=self.input_tensors, 
-                                          outputs=self.vis_nodes)                
+        if self.vis_nodes != self.model.inputs:
+            self.get_vis_values = K.function( inputs=self.input_tensors, 
+                                              outputs=self.vis_nodes)
+        else:
+            self.get_vis_values = lambda x: x[:-1]
 
         #Build gradient functions for desired output channels.
         self.get_gradients = {}
