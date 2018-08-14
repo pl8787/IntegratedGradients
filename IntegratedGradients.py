@@ -25,7 +25,7 @@ for deep neuron networks".
 class integrated_gradients:
     # model: Keras model that you wish to explain.
     # outchannels: In case the model are multi tasking, you can specify which output you want explain .
-    def __init__(self, model, outchannels=[], verbose=1):
+    def __init__(self, model, outchannels=[], verbose=1, vis_nodes=None):
     
         #get backend info (either tensorflow or theano)
         self.backend = K.backend()
@@ -38,7 +38,11 @@ class integrated_gradients:
         else:
             print("Invalid input model")
             return -1
-        
+
+        self.vis_nodes = vis_nodes
+        if not self.vis_nodes:
+            self.vis_nodes = self.model.inputs        
+
         #load input tensors
         self.input_tensors = []
         for i in self.model.inputs:
@@ -47,6 +51,11 @@ class integrated_gradients:
         # to be passed as input to any Keras function that uses 
         # a different behavior at train time and test time.
         self.input_tensors.append(K.learning_phase())
+
+        self.vis_node_tensors = []
+        for i in self.vis_nodes:
+            self.vis_node_tensors.append(i)
+        self.vis_node_tensors.append(K.learning_phase())
         
         #If outputchanels are specified, use it.
         #Otherwise evalueate all outputs.
@@ -61,7 +70,11 @@ class integrated_gradients:
             if verbose: 
                 print("Evaluated output channels (0-based index):")
                 print(','.join([str(i) for i in self.outchannels]))
-                
+
+        #Build evaluate functions for visual nodes.
+        self.get_vis_values = K.function( inputs=self.input_tensors, 
+                                          outputs=self.vis_nodes)                
+
         #Build gradient functions for desired output channels.
         self.get_gradients = {}
         if verbose: print("Building gradient functions")
@@ -70,12 +83,15 @@ class integrated_gradients:
         for c in self.outchannels:
             # Get tensor that calculates gradient
             if K.backend() == "tensorflow":
-                gradients = self.model.optimizer.get_gradients(self.model.output[:, c], self.model.input)
+                gradients = self.model.optimizer.get_gradients(
+                                            self.model.output[:, c], self.vis_nodes)
             if K.backend() == "theano":
-                gradients = self.model.optimizer.get_gradients(self.model.output[:, c].sum(), self.model.input)
+                gradients = self.model.optimizer.get_gradients(
+                                      self.model.output[:, c].sum(), self.vis_nodes)
                 
             # Build computational graph that computes the tensors given inputs
-            self.get_gradients[c] = K.function(inputs=self.input_tensors, outputs=gradients)
+            self.get_gradients[c] = K.function( inputs=self.vis_node_tensors, 
+                                                outputs=gradients)
             
             # This takes a lot of time for a big model with many tasks.
             # So lets print the progress.
@@ -94,8 +110,30 @@ class integrated_gradients:
         - steps: # steps from reference values to the actual sample (defualted to 50).
     Output: list of numpy arrays to integrated over.
     '''
-    def explain(self, sample, outc=0, reference=False, num_steps=50, verbose=0):
+    def explain(self, sample_input, outc=0, reference_input=False, num_steps=50, verbose=0):
         
+        if isinstance(sample_input, list):
+            sample = []
+            reference = []
+            #If reference is present, reference and sample size need to be equal.
+            if reference_input == False:
+                reference_input = []
+                for idx, si in enumerate(sample_input):
+                    reference_input.append(np.zeros(si.shape, dtype=si.dtype))
+            else:
+                assert len(sample_input) == len(reference_input)
+            
+            sample = self.get_vis_values(sample_input + [0])
+            reference = self.get_vis_values(reference_input + [0])
+            print(len(sample))
+            print(len(reference))
+        
+        if isinstance(sample_input, np.ndarray):
+            if reference_input == False:
+                reference_input = np.zeros(si.shape, dtype=si.dtype)
+            sample = self.get_vis_values([sample_input] + [0])[0]
+            reference = self.get_vis_values([reference_input] + [0])[0]
+
         # Each element for each input stream.
         samples = []
         numsteps = []
@@ -103,14 +141,10 @@ class integrated_gradients:
         
         # If multiple inputs are present, feed them as list of np arrays. 
         if isinstance(sample, list):
-            #If reference is present, reference and sample size need to be equal.
-            if reference != False: 
-                assert len(sample) == len(reference)
+            assert len(sample) == len(reference)
             for i in range(len(sample)):
-                if reference == False:
-                    _output = integrated_gradients.linearly_interpolate(sample[i], False, num_steps)
-                else:
-                    _output = integrated_gradients.linearly_interpolate(sample[i], reference[i], num_steps)
+                _output = integrated_gradients.linearly_interpolate(
+                                    sample[i], reference[i], num_steps)
                 samples.append(_output[0])
                 numsteps.append(_output[1])
                 step_sizes.append(_output[2])
@@ -173,3 +207,4 @@ class integrated_gradients:
             ret[s] = reference+(sample-reference)*(s*1.0/num_steps)
 
         return ret, num_steps, (sample-reference)*(1.0/num_steps)
+
