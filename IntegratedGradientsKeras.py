@@ -25,7 +25,7 @@ for deep neuron networks".
 class integrated_gradients:
     # model: Keras model that you wish to explain.
     # outchannels: In case the model are multi tasking, you can specify which output you want explain .
-    def __init__(self, model, outchannels=[], verbose=1, vis_nodes=None):
+    def __init__(self, model, outchannels=[], verbose=1, vis_nodes=None, extra_nodes=None):
     
         #get backend info (either tensorflow or theano)
         self.backend = K.backend()
@@ -55,6 +55,8 @@ class integrated_gradients:
         self.vis_node_tensors = []
         for i in self.vis_nodes:
             self.vis_node_tensors.append(i)
+        for i in self.extra_nodes:
+            self.vis_node_tensors.append(i)
         self.vis_node_tensors.append(K.learning_phase())
         
         #If outputchanels are specified, use it.
@@ -73,8 +75,9 @@ class integrated_gradients:
 
         #Build evaluate functions for visual nodes.
         if self.vis_nodes != self.model.inputs:
-            self.get_vis_values = K.function( inputs=self.input_tensors, 
-                                              outputs=self.vis_nodes)
+            self.get_vis_values = K.function( 
+                inputs=self.input_tensors, 
+                outputs=self.vis_nodes)
         else:
             self.get_vis_values = lambda x: x[:-1]
 
@@ -113,8 +116,11 @@ class integrated_gradients:
         - steps: # steps from reference values to the actual sample (defualted to 50).
     Output: list of numpy arrays to integrated over.
     '''
-    def explain(self, sample_input, outc=0, reference_input=False, num_steps=50, verbose=0):
-        
+    def explain(self, sample_input, outc=0, reference_input=False, num_steps=50, extra_values=[], verbose=0):
+
+        if isinstance(sample_input, np.ndarray):
+            sample_input = [sample_input]        
+
         if isinstance(sample_input, list):
             sample = []
             reference = []
@@ -131,12 +137,6 @@ class integrated_gradients:
             print(len(sample))
             print(len(reference))
         
-        if isinstance(sample_input, np.ndarray):
-            if reference_input == False:
-                reference_input = np.zeros_like(sample_input)
-            sample = self.get_vis_values([sample_input] + [0])[0]
-            reference = self.get_vis_values([reference_input] + [0])[0]
-
         # Each element for each input stream.
         samples = []
         numsteps = []
@@ -152,13 +152,6 @@ class integrated_gradients:
                 numsteps.append(_output[1])
                 step_sizes.append(_output[2])
         
-        # Or you can feed just a single numpy arrray. 
-        elif isinstance(sample, np.ndarray):
-            _output = integrated_gradients.linearly_interpolate(sample, reference, num_steps)
-            samples.append(_output[0])
-            numsteps.append(_output[1])
-            step_sizes.append(_output[2])
-            
         # Desired channel must be in the list of outputchannels
         assert outc in self.outchannels
         if verbose: print("Explaning the "+str(self.outchannels[outc])+"th output.")
@@ -166,6 +159,8 @@ class integrated_gradients:
         # For tensorflow backend
         _input = []
         for s in samples:
+            _input.append(s)
+        for s in extra_values:
             _input.append(s)
         _input.append(0)
         
