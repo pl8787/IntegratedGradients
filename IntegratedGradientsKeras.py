@@ -43,6 +43,8 @@ class integrated_gradients:
         if not self.vis_nodes:
             self.vis_nodes = self.model.inputs        
 
+        self.extra_nodes = extra_nodes
+
         #load input tensors
         self.input_tensors = []
         for i in self.model.inputs:
